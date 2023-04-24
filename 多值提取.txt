@@ -1,0 +1,42 @@
+# -*- coding: utf-8 -*-
+import arcpy
+import os
+
+arcpy.env.workspace = r"D:\data"
+
+# Define point feature class
+inFeatures = r"D:\data\shp\averagemonth_shp\202001\202001_clip.shp"
+
+# Define raster datasets
+popData = r"D:\data\人口数据\landscan-global-2020-assets\landscan-global-2020.tif"
+landUseData = r"D:\data\武汉大学CLCD\2020\CLCD_v01_2020.tif"
+ndviData = r"D:\data\Urmuqi_ndvi\2020\2020_ndvi.tif"
+aodData = r"D:\data\AOD\2020_caijian\202001\202001_clipped.tif"
+meteorologicalData = r"D:\data\Meteorological_data\Meteorological_data_caijian\202001\2020_1_clipped.tif"
+demData = r"D:\data\DEM\wulumuqi_dem.tif"
+
+# Define output table name and location
+outTable = "output.csv"
+outPath = r"D:\data\output_csv"
+
+# Create list of raster datasets
+rasterList = [popData, landUseData, ndviData, aodData, meteorologicalData, demData]
+
+# Loop through each raster dataset and extract values to point feature class
+for raster in rasterList:
+    # Extract values to table
+    outTableTemp = os.path.join(outPath, "temp.csv")
+    arcpy.sa.ExtractValuesToPoints(inFeatures, raster, outTableTemp)
+
+    # Join table to output table
+    if arcpy.Exists(outTable):
+        arcpy.JoinField_management(outTableTemp, "FID", outTable, "FID")
+        arcpy.CopyRows_management(outTableTemp, outTable)
+    else:
+        arcpy.CopyRows_management(outTableTemp, outTable)
+
+    # Delete temporary table
+    arcpy.Delete_management(outTableTemp)
+
+# Save output table
+arcpy.TableToTable_conversion(outTable, outPath, outTable)
