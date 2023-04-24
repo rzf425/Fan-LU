@@ -1,0 +1,49 @@
+import arcpy
+
+# Set up workspace environment
+arcpy.env.workspace = r"D:\data"
+
+# Set up point feature class
+pointFC = r"D:\data\shp\averagemonth_shp\202001\202001_clip.shp"
+
+# Set up raster datasets
+popData = r"D:\data\people\landscan-global-2020-assets\landscan-global-2020.tif"
+landUseData = r"D:\data\CLCD\2020\CLCD_v01_2020.tif"
+ndviData = r"D:\data\Urmuqi_ndvi\2020\2020_ndvi.tif"
+aodData = r"D:\data\AOD\2020_caijian\202001\202001_clipped.tif"
+meteorologicalData = r"D:\data\Meteorological_data\Meteorological_data_caijian\202001\2020_1_clipped.tif"
+demData = r"D:\data\DEM\wulumuqi_dem.tif"
+
+# Set up field mapping for each raster dataset
+popFieldMap = arcpy.FieldMap()
+popFieldMap.addInputField(popData, "*")
+landUseFieldMap = arcpy.FieldMap()
+landUseFieldMap.addInputField(landUseData, "*")
+ndviFieldMap = arcpy.FieldMap()
+ndviFieldMap.addInputField(ndviData, "*")
+aodFieldMap = arcpy.FieldMap()
+aodFieldMap.addInputField(aodData, "*")
+meteorologicalFieldMap = arcpy.FieldMap()
+meteorologicalFieldMap.addInputField(meteorologicalData, "*")
+demFieldMap = arcpy.FieldMap()
+demFieldMap.addInputField(demData, "*")
+
+# Set up field mappings for output table
+fieldMappings = arcpy.FieldMappings()
+fieldMappings.addFieldMap(popFieldMap)
+fieldMappings.addFieldMap(landUseFieldMap)
+fieldMappings.addFieldMap(ndviFieldMap)
+fieldMappings.addFieldMap(aodFieldMap)
+fieldMappings.addFieldMap(meteorologicalFieldMap)
+fieldMappings.addFieldMap(demFieldMap)
+
+# Use ExtractValuesToPoints to extract raster values to points
+arcpy.sa.ExtractValuesToPoints(pointFC, fieldMappings, popData, "popData")
+arcpy.sa.ExtractValuesToPoints(pointFC, fieldMappings, landUseData, "landUseData")
+arcpy.sa.ExtractValuesToPoints(pointFC, fieldMappings, ndviData, "ndviData")
+arcpy.sa.ExtractValuesToPoints(pointFC, fieldMappings, aodData, "aodData")
+arcpy.sa.ExtractValuesToPoints(pointFC, fieldMappings, meteorologicalData, "meteorologicalData")
+arcpy.sa.ExtractValuesToPoints(pointFC, fieldMappings, demData, "demData")
+
+# Export output table to CSV format
+arcpy.TableToTable_conversion(pointFC, r"D:\data\output_csv", "output.csv")
