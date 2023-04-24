@@ -1,0 +1,87 @@
+# -*- coding: utf-8 -*-
+import arcpy
+import os
+
+# 输入点数据和栅格数据
+points = r"D:\data\shp\averagemonth_shp\202002\202002_clip.shp"
+popData = r"D:\data\people\landscan-global-2020-assets\landscan-global-2020.tif"
+landUseData = r"D:\data\CLCD\2020\CLCD_v01_2020.tif"
+ndviData = r"D:\data\Urmuqi_ndvi\2020\2020_ndvi.tif"
+aodData = r"D:\data\AOD\2020_caijian\202002_clipped.tif"
+meteorologicalData = r"D:\data\Meteorological_data\Meteorological_data_caijian\2020_2_clipped.tif"
+demData = r"D:\data\DEM\wulumuqi_dem.tif"
+outputCSV = r"D:\data\output_csv\202002.csv"
+
+# 检查输入数据是否存在
+if not os.path.exists(points):
+    print("点数据 " + points + " 不存在，请重新指定路径。")
+    sys.exit()
+
+for data in [popData, landUseData, ndviData, aodData, meteorologicalData, demData]:
+    if not os.path.exists(data):
+        print("栅格数据 " + data + " 不存在，请重新指定路径。")
+        sys.exit()
+
+# 创建字段列表
+popFields = arcpy.ListFields(popData)
+landUseFields = arcpy.ListFields(landUseData)
+ndviFields = arcpy.ListFields(ndviData)
+aodFields = arcpy.ListFields(aodData)
+meteorologicalFields = arcpy.ListFields(meteorologicalData)
+demFields = arcpy.ListFields(demData)
+
+# 创建字典，储存字段名和字段类型
+fieldDict = {}
+for field in popFields:
+    fieldDict[field.name] = field.type
+for field in landUseFields:
+    fieldDict[field.name] = field.type
+for field in ndviFields:
+    fieldDict[field.name] = field.type
+for field in aodFields:
+    fieldDict[field.name] = field.type
+for field in meteorologicalFields:
+    fieldDict[field.name] = field.type
+for field in demFields:
+    fieldDict[field.name] = field.type
+
+# 在输出CSV文件中写入标题行
+with open(outputCSV, 'w') as f:
+    f.write('X,Y,')
+    for field in fieldDict:
+        f.write(field + ',')
+    f.write('\n')
+
+# 处理每一个点
+with arcpy.da.SearchCursor(points, ['SHAPE@XY']) as cursor:
+    for row in cursor:
+        # 获取每个点的坐标
+        x, y = row[0]
+        values = [x, y]
+
+        # 依次获取每一个栅格的值
+        for data, fields in zip([popData, landUseData, ndviData, aodData, meteorologicalData, demData],
+                                [popFields, landUseFields, ndviFields, aodFields, meteorologicalFields, demFields]):
+            # 提取栅格值到点
+            extractValues = arcpy.sa.ExtractValuesToPoints(points, data, r"D:\data\extractResult.csv")
+            # 获取值列表
+            valueList = []
+            with arcpy.da.SearchCursor(extractValues, ['*']) as extractCursor:
+                for extractRow in extractCursor:
+                    valueList.append(extractRow)
+
+            # 获取该栅格的字段名和类型
+            fieldNameList = [field.name for field in fields]
+            fieldTypeList = [fieldDict.get(field.name) for field in fields]
+
+            # 遍历所有的字段
+            for fieldName, fieldType in zip(fieldNameList, fieldTypeList):
+                print(fieldName)  # 调试语句，在这里查看fieldName的值
+                # 在values列表中添加该字段的值
+                values.append(','.join([str(value[fieldName]) for value in valueList]))
+
+        # 将该点的所有值添加到CSV文件中
+        with open(outputCSV, 'a') as f:
+            f.write(','.join([str(i) for i in values]) + '\n')
+
+print("处理完成！结果保存在 " + outputCSV + " 文件中。")
