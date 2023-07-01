@@ -1,0 +1,421 @@
+# -*- coding: utf-8 -*-
+from osgeo import ogr
+from osgeo import gdal
+import sys
+import numpy as np
+import joblib
+import shapefile
+from sklearn.ensemble import RandomForestRegressor
+import logging
+def getSampleByPntOnRaster(pntShp,raster_ds,fieldName):
+    point_shp = ogr.Open(pntShp)
+    point_layer = point_shp.GetLayer() 
+    transform = raster_ds.GetGeoTransform()# 获取栅格数据的地理参考信息
+    samples = [] 
+    # 遍历矢量点图层，获取每个点的像素值及其周围像素值
+    for feature in point_layer:
+        point = feature.geometry().GetPoint_2D()
+        x = int((point[0] - transform[0]) / transform[1])
+        y = int((point[1] - transform[3]) / transform[5])
+        values = raster_ds.ReadAsArray(x, y, 1, 1) 
+        lbl=feature.GetField(fieldName)  
+        values=np.append(values,lbl)
+        samples.append(values)
+    return np.array(samples)
+def getSampleByPntOnRaster2(pntShp,tif,fieldName):
+    point_shp = ogr.Open('points.shp')
+    point_layer = point_shp.GetLayer() 
+    raster_ds=gdal.open(tif)
+    transform = raster_ds.GetGeoTransform()# 获取栅格数据的地理参考信息
+    samples = [] 
+    # 遍历矢量点图层，获取每个点的像素值及其周围像素值
+    for feature in point_layer:
+        point = feature.geometry().GetPoint_2D()
+        x = int((point[0] - transform[0]) / transform[1])
+        y = int((point[1] - transform[3]) / transform[5])
+        values = raster_ds.ReadAsArray(x, y, 1, 1) 
+        lbl=point.GetField(fieldName)
+        values.append(lbl)
+        samples.append(values)
+    return np.array(samples)
+
+# 获取样本点及其领域的值
+def getPixels(shp, img):
+    # driver = ogr.GetDriverByName('ESRI Shapefile')
+    # ds = driver.Open(shp, 0)
+    # if ds is None:
+    #     print('Could not open ' + shp)
+    #     sys.exit(1)
+    # else:
+    #     print("打开了shp")
+
+    # layer = ds.GetLayer()
+    xValues = []
+    yValues = []
+    # feature = layer.GetNextFeature()
+    # while feature:
+    #     geometry = feature.GetGeometryRef()
+    #     x = geometry.GetX()
+    #     y = geometry.GetY()
+    border_shape = shapefile.Reader(shp)
+    # 通过创建reader类的对象进行shapefile文件的读取
+    border = border_shape.shapes()
+    print(len(border))
+    # .shapes()读取几何数据信息，存放着该文件中所有对象的 几何数据
+    # border是一个列表
+    for i in range(len(border)):
+        border_points = border[i].points
+        # 返回第1个对象的所有点坐标
+        for j in range(len(border_points)):
+            # border_points = [(x1,y1),(x2,y2),(x3,y3),…]
+            # print(border_points[0])
+            xValues.append(float(border_points[j][0]))
+            yValues.append(float(border_points[j][1]))
+
+    gdal.AllRegister()
+    ds = gdal.Open(img, gdal.GA_ReadOnly)
+    if ds is None:
+        #print('Could not open image')
+        logging.error(str(e))
+        sys.exit(1)
+
+    rows = ds.RasterYSize
+    cols = ds.RasterXSize
+    bands = ds.RasterCount
+    transform = ds.GetGeoTransform()
+    xOrigin = transform[0]
+    yOrigin = transform[3]
+    pixelWidth = transform[1]
+    pixelHeight = transform[5]
+    values = []
+    # print(transform)
+    for i in range(len(xValues)):
+        x = xValues[i]
+        y = yValues[i]
+        # print(x,y)
+        xOffset = int((x - xOrigin) / pixelWidth)
+        yOffset = int((y - yOrigin) / pixelHeight)
+        # print(xOffset,yOffset)
+        s = str(int(x)) + ' ' + str(int(y)) + ' ' + str(xOffset) + ' ' + str(yOffset) + ' '
+        pt = []
+        for j in range(bands):
+            band = ds.GetRasterBand(j + 1)
+            data = band.ReadAsArray(xOffset, yOffset, 12, 12)  # 请务必注意这里，这是以点为中心取了10*10的影像块作为样本,可以自己更改参数
+            value = data
+            # print(value)
+            value = value.flatten()
+            pt.append(value)
+
+        temp = []
+        pt = array_change(pt, temp)
+        values.append(pt)
+
+    temp2 = []
+    all_values = array_change(values, temp2)
+    all_values = np.asarray(all_values)
+    temp3 = []
+    result_values = array_change2(all_values, temp3)
+    result_values = np.asarray(result_values)
+    return result_values
+
+
+ 
+def get_model(model_path):
+    with open(model_path, 'rb') as f:
+        clf = joblib.load(f)
+    return clf
+
+
+ 
+#读取影像信息
+def read_img(input_path):
+    try:
+        gdal.SetConfigOption("GDAL_file_name_IS_UTF8", "YES") #用于处理gdal中文乱码
+        dataset = gdal.Open(input_path, 0)
+        if dataset is None:
+            print('could not open')
+        else:
+            # bandCound=dataset.ReadAsArray().shape[0]
+            # for i in range(bandCound):
+            #     dataset.GetRasterBand(i + 1).SetNoDataValue(-9999)
+            im_width = dataset.RasterXSize  # 栅格数据的宽度(栅格矩阵的列数)
+            im_height = dataset.RasterYSize  # 栅格数据的高度(栅格矩阵的行数)
+            im_data = dataset.ReadAsArray(0, 0, im_width, im_height).astype(np.float32)  # 将数据写成数组
+            im_geotrans = dataset.GetGeoTransform()  # 栅格数据的六参数(仿射矩阵)
+            im_proj = dataset.GetProjection()  # 栅格数据的投影（地图投影信息）
+            nodata = dataset.GetRasterBand(1).GetNoDataValue() #空值
+            nodataIndex=np.where(im_data<-9999)
+            im_data[nodataIndex]=-9999
+            
+
+        del dataset  # 关闭对象
+
+        return im_width, im_height, im_data, im_geotrans, im_proj, nodata
+    except BaseException as e:  #抛出异常的处理
+        print(str(e))
+
+
+#写出影像数据
+def write_img(im_data, im_geotrans, im_proj, nodata, output_path):
+    from osgeo import gdal
+    try:
+        gdal.SetConfigOption("GDAL_file_name_IS_UTF8", "YES")
+        # 判断栅格数据的数据类型
+        if 'int8' in im_data.dtype.name:
+            datatype = gdal.GDT_Byte
+        elif 'int16' in im_data.dtype.name:
+            datatype = gdal.GDT_UInt16
+        else:
+            datatype = gdal.GDT_Float32
+        # 判读数组维数
+        if len(im_data.shape) <= 2:
+            im_bands, (im_height, im_width) = 1, im_data.shape
+        else:
+            im_bands, im_height, im_width = im_data.shape
+
+        # 创建文件
+        driver = gdal.GetDriverByName("GTiff")  # 数据类型必须有，因为要计算需要多大内存空间
+        dataset = driver.Create(output_path, im_width, im_height, im_bands, datatype)
+        dataset.SetGeoTransform(im_geotrans)  # 写入仿射变换参数
+        dataset.SetProjection(im_proj)  # 写入投影
+
+        if im_bands == 1:
+            dataset.GetRasterBand(1).SetNoDataValue(nodata)
+            dataset.GetRasterBand(1).WriteArray(im_data)  # 写入数组数据
+        else:
+            for i in range(im_bands):
+                dataset.GetRasterBand(i + 1).SetNoDataValue(nodata)
+                dataset.GetRasterBand(i + 1).WriteArray(im_data[i])
+
+        del dataset
+
+    except BaseException as e:
+        print(str(e))
+
+
+def array_change(inlist, outlist):
+    for i in range(len(inlist[0])):
+        outlist.append([j[i] for j in inlist])
+    return outlist
+
+
+def array_change2(inlist, outlist):
+    for ele in inlist:
+        for ele2 in ele:
+            outlist.append(ele2)
+    return outlist
+
+
+# 获取影像基本信息
+def getTifSize(tif):
+    dataSet = gdal.Open(tif)
+    width = dataSet.RasterXSize
+    height = dataSet.RasterYSize
+    bands = dataSet.RasterCount
+    geoTrans = dataSet.GetGeoTransform()
+    proj = dataSet.GetProjection()
+    return width, height, bands, geoTrans, proj
+
+def prepareRF(xs, ys, mtrys, ntrees): 
+    rf = RandomForestRegressor(n_estimators=ntrees,
+                               criterion='mse',
+                               oob_score=True,
+                               max_features=mtrys,
+                               random_state=10,
+                               bootstrap=True,
+                               # for yearly
+                               # min_samples_leaf=3, 
+                               # max_depth=15,
+
+                               # 4daily
+                               # min_samples_leaf=15,
+                               # min_samples_split=30,
+                               # max_depth=10,
+                               n_jobs=-1)
+    rf.fit(xs, ys.ravel()) 
+    # rf.fit(xs, ys.values.ravel())
+    return rf
+
+# DFI:100*(1-RSWIR2/RSWIR1)*RRED/RNIR
+# CI:R850/R730 - 1 
+
+#计算IRECI植被指数：(RNIR − RRED)/(RE1/RE2)
+def GetIRECI(red_data, nir_data):
+    try:
+        numerator = np.array(nir_data - red_data, dtype=np.float32)
+        denominator = np.array(nir_data + red_data, dtype=np.float32)
+        nodata = np.full((nir_data.shape[0], nir_data.shape[1]), -999.0, dtype=np.float32)
+        ndvi = np.divide(numerator, denominator, out=nodata, where=denominator != 0.0)
+        return ndvi
+
+    except BaseException as e:
+        print(str(e))
+#计算MSI植被指数：RSIR/RNIR
+def GetMSI(red_data, nir_data):
+    try:
+        numerator = np.array(nir_data - red_data, dtype=np.float32)
+        denominator = np.array(nir_data + red_data, dtype=np.float32)
+        nodata = np.full((nir_data.shape[0], nir_data.shape[1]), -999.0, dtype=np.float32)
+        ndvi = np.divide(numerator, denominator, out=nodata, where=denominator != 0.0)
+        return ndvi
+
+    except BaseException as e:
+        print(str(e))
+#计算SAVI植被指数：(RNIR-RRED)/[(RNIR+RRED)(1+L)]
+def GetSAVI(red_data, nir_data):
+    try:
+        numerator = np.array(nir_data - red_data, dtype=np.float32)
+        denominator = np.array(nir_data + red_data, dtype=np.float32)
+        nodata = np.full((nir_data.shape[0], nir_data.shape[1]), -999.0, dtype=np.float32)
+        ndvi = np.divide(numerator, denominator, out=nodata, where=denominator != 0.0)
+        return ndvi
+
+    except BaseException as e:
+        print(str(e))
+#计算NDVI植被指数：
+def GetNDVI(red_data, nir_data):
+    try:
+        numerator = np.array(nir_data - red_data, dtype=np.float32)
+        denominator = np.array(nir_data + red_data, dtype=np.float32)
+        nodata = np.full((nir_data.shape[0], nir_data.shape[1]), -999.0, dtype=np.float32)
+        ndvi = np.divide(numerator, denominator, out=nodata, where=denominator != 0.0)
+        return ndvi
+    except BaseException as e:
+        print(str(e))
+#计算RVI植被指数：
+def GetRVI(red_data, nir_data):
+
+    try:
+        numerator = np.array(nir_data, dtype=np.float32)
+        denominator = np.array(red_data, dtype=np.float32)
+        nodata = np.full((nir_data.shape[0], nir_data.shape[1]), -999.0, dtype=np.float32)
+        rvi = np.divide(numerator, denominator, out=nodata, where=denominator != 0.0)
+        #RVI——比值植被指数：rvi=nir/red
+        return rvi
+    except BaseException as e:
+        print(str(e))
+
+#DFI100*(1-RSWIR2/RSWIR1)*RRED/RNIR
+def GetDFI(swir1,swir2,red,nir):
+    try:
+        nir_data = np.array(nir, dtype=np.float32)
+        red_data = np.array(red, dtype=np.float32)
+        swir1 = np.array(swir1, dtype=np.float32)
+        swir2 = np.array(swir2, dtype=np.float32)
+        dfi=np.array(100*(1-swir2/swir1)*(red_data/nir_data))
+        return dfi
+
+    except BaseException as e:
+        print(str(e))
+#计算DVI植被指数：dvi = nir - red
+def GetDVI(nir_data,red_data):
+
+    try:
+        nir_data = np.array(nir_data, dtype=np.float32)
+        red_data = np.array(red_data, dtype=np.float32)
+        dvi_data = np.array(nir_data-red_data, dtype=np.float32)
+        dvi = np.array(dvi_data, dtype=np.float32)
+        return dvi
+
+    except BaseException as e:
+        print(str(e))
+#计算EVI植被指数：evi = 2.5*((nir-red)/(nir+6*red-7.5*blue+1))
+def GetEVI(nir_data,red_data,blue_data):
+
+    try:
+        nir_data = np.array(nir_data, dtype=np.float32)
+        red_data = np.array(red_data, dtype=np.float32)
+        blue_data = np.array(blue_data, dtype=np.float32)
+        x1 = np.array(nir_data-red_data, dtype=np.float32)
+        x2 = np.array(nir_data+6*red_data-7.5*blue_data+1, dtype=np.float32)
+        nodata = np.full((nir_data.shape[0], nir_data.shape[1]), -999.0, dtype=np.float32)
+        x3 = np.divide(x1,x2, out=nodata, where=x2 != 0.0)
+        evi_data = np.array(2.5*x3, dtype=np.float32)
+        evi = np.array(evi_data, dtype=np.float32)
+        return evi
+    except BaseException as e:
+        print(str(e))
+
+def prepareRstData(img_train,outRst):
+    im_width, im_height, im_data, im_geotrans, im_proj, nodata = read_img(img_train)  
+    ds=gdal.Open(img_train)
+    blue_data = im_data[1] 
+    red_data = im_data[3]
+    nir_data = im_data[4] 
+    swir1=im_data[5]
+    swir2=im_data[6]
+    ndvi=GetNDVI(red_data,nir_data)
+    msi=GetMSI(red_data, nir_data)
+    savi=GetSAVI(red_data, nir_data)
+    rvi=GetRVI(red_data, nir_data)
+    dvi= GetDVI(nir_data,red_data)
+    evi= GetEVI(nir_data,red_data,blue_data)
+    dfi=GetDFI(swir1,swir2,red_data,nir_data)
+    bands=[]
+    for i in range(1, ds.RasterCount+1):
+        band = ds.GetRasterBand(i)
+        bands.append(band.ReadAsArray())
+    bands.append(ndvi)
+    bands.append(msi)
+    bands.append(savi)
+    bands.append(rvi)
+    bands.append(dvi)
+    bands.append(evi)
+    bands.append(dfi)
+    driver = gdal.GetDriverByName('GTiff')
+    output_ds = driver.Create(outRst, ds.RasterXSize,ds.RasterYSize, len(bands), gdal.GDT_Float32)
+    output_ds.SetGeoTransform(im_geotrans)
+    output_ds.SetProjection(im_proj)
+    for i in range(1, ds.RasterCount + 1): 
+        output_ds.GetRasterBand(i).WriteArray(bands[i])
+        output_ds.GetRasterBand(i).SetNoDataValue(nodata)
+    del output_ds
+    return outRst
+    # write_img(output_ds, im_geotrans, im_proj, nodata, outRst)
+def trainAndSaveMdl(img_train,shp_path,model_path,temp_path):
+    outRst=prepareRstData(img_train,temp_path+'/tif4train.tif')
+    output_ds=gdal.Open(outRst)
+    samples=getSampleByPntOnRaster(shp_path,output_ds,'pm25')
+    xs, ys = np.split(samples, [-1], axis=1)
+    rf=prepareRF(xs, ys, xs.shape[1], 200)
+    joblib.dump(rf,model_path)
+def predictValAndExportRF(model,tifData, outFname): 
+    bands = [] 
+    ds = gdal.Open(tifData) 
+    rowCount = ds.RasterYSize
+    colCount = ds.RasterXSize
+    bandCount = ds.RasterCount
+    for i in range(1, ds.RasterCount+1):
+        band = ds.GetRasterBand(i)
+        bands.append(band.ReadAsArray())
+    tif = gdal.GetDriverByName('GTiff').Create(outFname,colCount,rowCount,1,gdal.GDT_CFloat32)
+    tif.SetProjection(ds.GetProjection())
+    
+    bands4predict=np.stack(np.array(bands),axis=2)
+    bands4predict=bands4predict.reshape(-1,bandCount)
+    print(bands4predict.shape)
+    
+    predictVal = model.predict(bands4predict)
+    predictVal=predictVal.reshape(-1,colCount)
+    predictVal=np.around(np.array(predictVal.tolist()),4)
+    tif.GetRasterBand(1).WriteArray(predictVal)
+    del tif
+#获取土壤氮含量反演：tif为输入tif格式Landsat数据；outRst为反演结果数据全路径；modelPath为训练好的反演模型全路径
+def GetPM25(inRst,outRst,modelPath,temp_path):
+    try:  
+        model=get_model(modelPath)
+        inRstWithAllband=prepareRstData(inRst,temp_path+'/tif4train.tif') 
+        predictValAndExportRF(model,inRstWithAllband, outRst)
+        #print('Soil N retrieved successfully')
+        logging.info("Soil N retrieved successfully")
+    except BaseException as e:
+        print('Failed:'+str(e)) 
+if __name__ == '__main__': 
+    inputTif=r''
+    outTif=r''
+    modelPath=r'E:/data/result/rfmodelPM.pkl'
+    temp_path=r''
+    shp_path=r''
+    trainAndSaveMdl(inputTif,shp_path,modelPath,temp_path)
+    # GetPM25(inputTif,outTif,modelPath,temp_path)
+    
